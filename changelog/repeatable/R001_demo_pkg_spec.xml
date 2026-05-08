@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+    https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="R001-demo-pkg-spec" author="nasir" runOnChange="true">
+        <sqlFile
+            path="../../objects/packages/demo_pkg_spec.sql"
+            relativeToChangelogFile="true"
+            splitStatements="false"
+            endDelimiter="/"/>
+    </changeSet>
+
+</databaseChangeLog>

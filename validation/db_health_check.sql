@@ -1,0 +1,10 @@
+SET HEADING ON
+SET FEEDBACK ON
+SET PAGESIZE 100
+SET LINESIZE 200
+
+PROMPT Checking database connection...
+
+SELECT USER AS connected_user FROM dual;
+
+EXIT

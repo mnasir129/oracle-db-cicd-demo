@@ -1,0 +1,8 @@
+*.log
+*.zip
+*.tmp
+deployment-preview.sql
+deployment-output.log
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+    https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="V001-create-demo-message-table" author="nasir">
+        <sqlFile
+            path="../../objects/tables/create_demo_table.sql"
+            relativeToChangelogFile="true"
+            splitStatements="true"
+            endDelimiter=";"/>
+
+        <rollback>
+            <sql>DROP TABLE demo_message PURGE;</sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
