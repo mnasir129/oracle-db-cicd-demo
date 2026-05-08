@@ -14,10 +14,11 @@ pipeline {
 
     parameters {
         booleanParam(name: 'RUN_DB_CI', defaultValue: true, description: 'Run Oracle DB CI validation and preview')
+        booleanParam(name: 'RUN_DB_DEPLOY', defaultValue: false, description: 'Apply Liquibase update to Oracle CI schema')
     }
 
     stages {
-        stage('Oracle DB CI Validation') {
+        stage('Oracle DB CI/CD') {
             when {
                 expression { return params.RUN_DB_CI }
             }
@@ -45,11 +46,15 @@ pipeline {
                         checkout scm
 
                         sh '''
+                            set -e
+
                             echo "Current workspace:"
                             pwd
 
                             echo "Repository files:"
                             find . -type f | sort
+
+                            mkdir -p logs artifacts
                         '''
                     }
                 }
@@ -74,7 +79,7 @@ pipeline {
                             test -f validation/check_invalid_objects.sql
                             test -f validation/smoke_test.sql
 
-                            echo "Repo structure validation passed."
+                            echo "Repo structure validation passed." | tee logs/repo-structure-validation.log
                         '''
                     }
                 }
@@ -82,8 +87,11 @@ pipeline {
                 stage('Show SQLcl Version') {
                     steps {
                         sh '''
-                            sql -V
-                            java -version
+                            set -e
+
+                            sql -V | tee logs/sqlcl-version.log
+                            java -version 2>&1 | tee logs/java-version.log
+                            zip -v | head -3 | tee logs/zip-version.log
                         '''
                     }
                 }
@@ -103,12 +111,14 @@ pipeline {
                         ]) {
                             sh '''
                                 set +x
+                                set -e
+
                                 echo "Testing Oracle DB connection..."
 
-                                sql -s "$ORACLE_USER/$ORACLE_PASSWORD@$ORACLE_CONNECT_STRING" @validation/db_health_check.sql > db-health-check.log
+                                sql -s "$ORACLE_USER/$ORACLE_PASSWORD@$ORACLE_CONNECT_STRING" @validation/db_health_check.sql > logs/db-health-check.log
 
                                 echo "DB health check output:"
-                                cat db-health-check.log
+                                cat logs/db-health-check.log
                             '''
                         }
                     }
@@ -129,15 +139,17 @@ pipeline {
                         ]) {
                             sh '''
                                 set +x
+                                set -e
+
                                 echo "Running Liquibase validate..."
 
-                                sql -s "$ORACLE_USER/$ORACLE_PASSWORD@$ORACLE_CONNECT_STRING" <<'SQL' > liquibase-validate.log
+                                sql -s "$ORACLE_USER/$ORACLE_PASSWORD@$ORACLE_CONNECT_STRING" <<'SQL' > logs/liquibase-validate.log
 liquibase validate -changelog-file changelog/controller.xml
 exit
 SQL
 
                                 echo "Liquibase validate output:"
-                                cat liquibase-validate.log
+                                cat logs/liquibase-validate.log
                             '''
                         }
                     }
@@ -158,15 +170,17 @@ SQL
                         ]) {
                             sh '''
                                 set +x
+                                set -e
+
                                 echo "Running Liquibase status..."
 
-                                sql -s "$ORACLE_USER/$ORACLE_PASSWORD@$ORACLE_CONNECT_STRING" <<'SQL' > liquibase-status.log
+                                sql -s "$ORACLE_USER/$ORACLE_PASSWORD@$ORACLE_CONNECT_STRING" <<'SQL' > logs/liquibase-status.log
 liquibase status -changelog-file changelog/controller.xml
 exit
 SQL
 
                                 echo "Liquibase status output:"
-                                cat liquibase-status.log
+                                cat logs/liquibase-status.log
                             '''
                         }
                     }
@@ -187,6 +201,8 @@ SQL
                         ]) {
                             sh '''
                                 set +x
+                                set -e
+
                                 echo "Generating deployment-preview.sql using Liquibase update-sql..."
 
                                 rm -f deployment-preview.sql
@@ -196,11 +212,158 @@ liquibase update-sql -changelog-file changelog/controller.xml
 exit
 SQL
 
+                                cp deployment-preview.sql logs/deployment-preview.sql
+
                                 echo "Preview SQL generated:"
                                 ls -lh deployment-preview.sql
 
                                 echo "First 80 lines of deployment-preview.sql:"
                                 head -80 deployment-preview.sql || true
+                            '''
+                        }
+                    }
+                }
+
+                stage('Liquibase Update Deploy') {
+                    when {
+                        expression { return params.RUN_DB_DEPLOY }
+                    }
+
+                    steps {
+                        withCredentials([
+                            usernamePassword(
+                                credentialsId: 'oracle-ci-creds',
+                                usernameVariable: 'ORACLE_USER',
+                                passwordVariable: 'ORACLE_PASSWORD'
+                            ),
+                            string(
+                                credentialsId: 'oracle-ci-connect-string',
+                                variable: 'ORACLE_CONNECT_STRING'
+                            )
+                        ]) {
+                            sh '''
+                                set +x
+                                set -e
+
+                                echo "Running Liquibase update. This applies Git-controlled DB changes to the CI schema..."
+
+                                sql -s "$ORACLE_USER/$ORACLE_PASSWORD@$ORACLE_CONNECT_STRING" <<'SQL' > logs/liquibase-update.log
+liquibase update -changelog-file changelog/controller.xml
+exit
+SQL
+
+                                echo "Liquibase update output:"
+                                cat logs/liquibase-update.log
+                            '''
+                        }
+                    }
+                }
+
+                stage('Check Invalid Objects') {
+                    when {
+                        expression { return params.RUN_DB_DEPLOY }
+                    }
+
+                    steps {
+                        withCredentials([
+                            usernamePassword(
+                                credentialsId: 'oracle-ci-creds',
+                                usernameVariable: 'ORACLE_USER',
+                                passwordVariable: 'ORACLE_PASSWORD'
+                            ),
+                            string(
+                                credentialsId: 'oracle-ci-connect-string',
+                                variable: 'ORACLE_CONNECT_STRING'
+                            )
+                        ]) {
+                            sh '''
+                                set +x
+                                set -e
+
+                                echo "Checking invalid database objects after deployment..."
+
+                                sql -s "$ORACLE_USER/$ORACLE_PASSWORD@$ORACLE_CONNECT_STRING" @validation/check_invalid_objects.sql > logs/check-invalid-objects.log
+
+                                echo "Invalid object check output:"
+                                cat logs/check-invalid-objects.log
+                            '''
+                        }
+                    }
+                }
+
+                stage('Run Smoke Test') {
+                    when {
+                        expression { return params.RUN_DB_DEPLOY }
+                    }
+
+                    steps {
+                        withCredentials([
+                            usernamePassword(
+                                credentialsId: 'oracle-ci-creds',
+                                usernameVariable: 'ORACLE_USER',
+                                passwordVariable: 'ORACLE_PASSWORD'
+                            ),
+                            string(
+                                credentialsId: 'oracle-ci-connect-string',
+                                variable: 'ORACLE_CONNECT_STRING'
+                            )
+                        ]) {
+                            sh '''
+                                set +x
+                                set -e
+
+                                echo "Running smoke test..."
+
+                                sql -s "$ORACLE_USER/$ORACLE_PASSWORD@$ORACLE_CONNECT_STRING" @validation/smoke_test.sql > logs/smoke-test.log
+
+                                echo "Smoke test output:"
+                                cat logs/smoke-test.log
+                            '''
+                        }
+                    }
+                }
+
+                stage('Check Liquibase History') {
+                    when {
+                        expression { return params.RUN_DB_DEPLOY }
+                    }
+
+                    steps {
+                        withCredentials([
+                            usernamePassword(
+                                credentialsId: 'oracle-ci-creds',
+                                usernameVariable: 'ORACLE_USER',
+                                passwordVariable: 'ORACLE_PASSWORD'
+                            ),
+                            string(
+                                credentialsId: 'oracle-ci-connect-string',
+                                variable: 'ORACLE_CONNECT_STRING'
+                            )
+                        ]) {
+                            sh '''
+                                set +x
+                                set -e
+
+                                echo "Checking Liquibase DATABASECHANGELOG history..."
+
+                                cat > check_liquibase_history.sql <<'SQL'
+SET LINESIZE 250
+COLUMN id FORMAT A35
+COLUMN author FORMAT A15
+COLUMN filename FORMAT A60
+COLUMN dateexecuted FORMAT A35
+
+SELECT id, author, filename, dateexecuted
+FROM databasechangelog
+ORDER BY dateexecuted;
+
+EXIT
+SQL
+
+                                sql -s "$ORACLE_USER/$ORACLE_PASSWORD@$ORACLE_CONNECT_STRING" @check_liquibase_history.sql > logs/liquibase-history.log
+
+                                echo "Liquibase history output:"
+                                cat logs/liquibase-history.log
                             '''
                         }
                     }
@@ -219,28 +382,28 @@ SQL
                                 changelog \
                                 objects \
                                 validation \
+                                logs \
                                 README.md \
                                 .gitignore \
                                 Jenkinsfile \
-                                deployment-preview.sql \
-                                db-health-check.log \
-                                liquibase-validate.log \
-                                liquibase-status.log
+                                deployment-preview.sql
+
+                            cp "${RELEASE_ZIP}" artifacts/
 
                             echo "Release ZIP created:"
                             ls -lh "${RELEASE_ZIP}"
+                            ls -lh artifacts/
                         '''
                     }
                 }
 
-                stage('Archive CI Artifacts') {
+                stage('Archive Pipeline Artifacts') {
                     steps {
                         archiveArtifacts artifacts: '''
                             deployment-preview.sql,
-                            db-health-check.log,
-                            liquibase-validate.log,
-                            liquibase-status.log,
-                            oracle-db-cicd-demo-*.zip
+                            logs/*.log,
+                            logs/*.sql,
+                            artifacts/*.zip
                         ''', fingerprint: true
                     }
                 }
@@ -248,7 +411,7 @@ SQL
 
             post {
                 always {
-                    echo "Cleaning Oracle DB CI workspace"
+                    echo "Cleaning Oracle DB CI/CD workspace"
                     deleteDir()
                 }
             }
@@ -257,16 +420,16 @@ SQL
 
     post {
         always {
-            echo "Oracle DB CI preview pipeline finished"
+            echo "Oracle DB CI/CD pipeline finished"
             deleteDir()
         }
 
         failure {
-            echo "Oracle DB CI pipeline failed. Check DB connection, Liquibase changelog, or SQLcl logs."
+            echo "Oracle DB CI/CD pipeline failed. Check DB connection, Liquibase changelog, SQLcl logs, invalid objects, or smoke test output."
         }
 
         success {
-            echo "Oracle DB CI pipeline completed successfully. Preview SQL and release ZIP were archived."
+            echo "Oracle DB CI/CD pipeline completed successfully."
         }
     }
 }
