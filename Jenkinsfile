@@ -1,4 +1,4 @@
-def nexusRegistry = "192.168.0.121:8081"
+def nexusRegistry = "172.28.50.112:8081"
 def oracleSqlclImage = "${nexusRegistry}/docker-hosted/local-oracle-sqlcl-liquibase:latest"
 
 pipeline {
