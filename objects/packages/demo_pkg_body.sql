@@ -22,7 +22,7 @@ CREATE OR REPLACE PACKAGE BODY demo_pkg AS
         l_count NUMBER;
     BEGIN
         l_count := get_message_count;
-        DBMS_OUTPUT.PUT_LINE('DEMO_PKG health check OK from Jenkins deploy stage Testing. Message count=' || l_count);
+        DBMS_OUTPUT.PUT_LINE('DEMO_PKG health check OK from Jenkins deploy stage abbbb. Message count=' || l_count);
     END health_check;
 
 END demo_pkg;
